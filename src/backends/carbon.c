@@ -58,6 +58,26 @@ static void plaintext_each(
 	if (!is_connected(carbon))
 		return;
 
+	if (carbon->namespacing.global) {
+		memcpy(ptr, carbon->namespacing.global, carbon->namespacing.global_len);
+		ptr += carbon->namespacing.global_len;
+		*ptr++ = '.';
+	}
+
+	if ((type == BRUBECK_MT_COUNTER || type == BRUBECK_MT_METER) && carbon->namespacing.counter) {
+		memcpy(ptr, carbon->namespacing.counter, carbon->namespacing.counter_len);
+		ptr += carbon->namespacing.counter_len;
+		*ptr++ = '.';
+	} else if (type == BRUBECK_MT_TIMER && carbon->namespacing.timer) {
+		memcpy(ptr, carbon->namespacing.timer, carbon->namespacing.timer_len);
+		ptr += carbon->namespacing.timer_len;
+		*ptr++ = '.';
+	} else if (type == BRUBECK_MT_GAUGE && carbon->namespacing.gauge) {
+		memcpy(ptr, carbon->namespacing.gauge, carbon->namespacing.gauge_len);
+		ptr += carbon->namespacing.gauge_len;
+		*ptr++ = '.';
+	}
+
 	memcpy(ptr, key, key_len);
 	ptr += key_len;
 	*ptr++ = ' ';
@@ -103,27 +123,54 @@ static inline size_t pickle1_double(char *ptr, void *_src)
 }
 
 static void pickle1_push(
-		struct pickler *buf,
+		struct brubeck_carbon *carbon,
+		uint8_t type,
 		const char *key,
 		uint8_t key_len,
-		uint32_t timestamp,
 		value_t value)
 {
+	char nkeybuf[1024];
+	char *nkeyptr = nkeybuf;
+	size_t nkey_len;
+	struct pickler *buf = &carbon->pickler;
 	char *ptr = buf->ptr + buf->pos;
+
+	if (carbon->namespacing.global) {
+		memcpy(nkeyptr, carbon->namespacing.global, carbon->namespacing.global_len);
+		nkeyptr += carbon->namespacing.global_len;
+		*nkeyptr++ = '.';
+	}
+
+	if ((type == BRUBECK_MT_COUNTER || type == BRUBECK_MT_METER) && carbon->namespacing.counter) {
+		memcpy(nkeyptr, carbon->namespacing.counter, carbon->namespacing.counter_len);
+		nkeyptr += carbon->namespacing.counter_len;
+		*nkeyptr++ = '.';
+	} else if (type == BRUBECK_MT_TIMER && carbon->namespacing.timer) {
+		memcpy(nkeyptr, carbon->namespacing.timer, carbon->namespacing.timer_len);
+		nkeyptr += carbon->namespacing.timer_len;
+		*nkeyptr++ = '.';
+	} else if (type == BRUBECK_MT_GAUGE && carbon->namespacing.gauge) {
+		memcpy(nkeyptr, carbon->namespacing.gauge, carbon->namespacing.gauge_len);
+		nkeyptr += carbon->namespacing.gauge_len;
+		*nkeyptr++ = '.';
+	}
+
+	memcpy(nkeyptr, key, key_len);
+	nkey_len = strlen(nkeyptr);
 
 	*ptr++ = '(';
 
 	*ptr++ = 'U';
-	*ptr++ = key_len;
-	memcpy(ptr, key, key_len);
-	ptr += key_len;
+	*ptr++ = nkey_len;
+	memcpy(ptr, nkeyptr, nkey_len);
+	ptr += nkey_len;
 
 	*ptr++ = 'q';
 	*ptr++ = buf->pt++;
 
 	*ptr++ = '(';
 
-	ptr += pickle1_int32(ptr, &timestamp);
+	ptr += pickle1_int32(ptr, &carbon->backend.tick_time);
 	ptr += pickle1_double(ptr, &value);
 
 	*ptr++ = 't';
@@ -193,8 +240,7 @@ static void pickle1_each(
 	if (!is_connected(carbon))
 		return;
 
-	pickle1_push(&carbon->pickler, key, key_len,
-		carbon->backend.tick_time, value);
+	pickle1_push(carbon, type, key, key_len, value);
 }
 
 struct brubeck_backend *
@@ -202,14 +248,19 @@ brubeck_carbon_new(struct brubeck_server *server, json_t *settings, int shard_n)
 {
 	struct brubeck_carbon *carbon = xcalloc(1, sizeof(struct brubeck_carbon));
 	char *address;
+	char *global_prefix = NULL, *prefix_counter = NULL, *prefix_timer = NULL, *prefix_gauge = NULL;
 	int port, frequency, pickle = 0;
 
 	json_unpack_or_die(settings,
-		"{s:s, s:i, s?:b, s:i}",
+		"{s:s, s:i, s?:b, s:i, s?:s, s?:s, s?:s, s?:s}",
 		"address", &address,
 		"port", &port,
 		"pickle", &pickle,
-		"frequency", &frequency);
+		"frequency", &frequency,
+		"global_prefix", &global_prefix,
+		"prefix_counter", &prefix_counter,
+		"prefix_timer", &prefix_timer,
+		"prefix_gauge", &prefix_gauge);
 
 	carbon->backend.type = BRUBECK_BACKEND_CARBON;
 	carbon->backend.shard_n = shard_n;
@@ -223,6 +274,26 @@ brubeck_carbon_new(struct brubeck_server *server, json_t *settings, int shard_n)
 	} else {
 		carbon->backend.sample = &plaintext_each;
 		carbon->backend.flush = NULL;
+	}
+
+	if (global_prefix) {
+		carbon->namespacing.global = global_prefix;
+		carbon->namespacing.global_len = strlen(global_prefix);
+	}
+
+	if (prefix_counter) {
+		carbon->namespacing.counter = prefix_counter;
+		carbon->namespacing.counter_len = strlen(prefix_counter);
+	}
+
+	if (prefix_timer) {
+		carbon->namespacing.timer = prefix_timer;
+		carbon->namespacing.timer_len = strlen(prefix_timer);
+	}
+
+	if (prefix_gauge) {
+		carbon->namespacing.gauge = prefix_gauge;
+		carbon->namespacing.gauge_len = strlen(prefix_gauge);
 	}
 
 	carbon->backend.sample_freq = frequency;
