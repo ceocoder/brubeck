@@ -44,6 +44,7 @@ static void carbon_disconnect(struct brubeck_carbon *self)
 }
 
 static void plaintext_each(
+	uint8_t type,
 	const char *key,
 	value_t value,
 	void *backend)
@@ -176,6 +177,7 @@ static void pickle1_flush(void *backend)
 }
 
 static void pickle1_each(
+	uint8_t type,
 	const char *key,
 	value_t value,
 	void *backend)
