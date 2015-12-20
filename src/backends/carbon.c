@@ -129,41 +129,52 @@ static void pickle1_push(
 		uint8_t key_len,
 		value_t value)
 {
-	char nkeybuf[1024];
-	char *nkeyptr = nkeybuf;
-	size_t nkey_len;
+	uint8_t namespaced_key_len = 0;
+	char *type_namespace = NULL;
+	size_t type_namespace_len = 0;
 	struct pickler *buf = &carbon->pickler;
 	char *ptr = buf->ptr + buf->pos;
 
 	if (carbon->namespacing.global) {
-		memcpy(nkeyptr, carbon->namespacing.global, carbon->namespacing.global_len);
-		nkeyptr += carbon->namespacing.global_len;
-		*nkeyptr++ = '.';
+		// the global namespace plus the "." character
+		namespaced_key_len += carbon->namespacing.global_len + 1;
 	}
 
 	if ((type == BRUBECK_MT_COUNTER || type == BRUBECK_MT_METER) && carbon->namespacing.counter) {
-		memcpy(nkeyptr, carbon->namespacing.counter, carbon->namespacing.counter_len);
-		nkeyptr += carbon->namespacing.counter_len;
-		*nkeyptr++ = '.';
+		type_namespace = carbon->namespacing.counter;
+		type_namespace_len = carbon->namespacing.counter_len;
+		// the counter namespace plus the "." character
+		namespaced_key_len += carbon->namespacing.counter_len + 1;
 	} else if (type == BRUBECK_MT_TIMER && carbon->namespacing.timer) {
-		memcpy(nkeyptr, carbon->namespacing.timer, carbon->namespacing.timer_len);
-		nkeyptr += carbon->namespacing.timer_len;
-		*nkeyptr++ = '.';
+		type_namespace = carbon->namespacing.timer;
+		type_namespace_len = carbon->namespacing.timer_len;
+		// the counter namespace plus the "." character
+		namespaced_key_len += carbon->namespacing.timer_len + 1;
 	} else if (type == BRUBECK_MT_GAUGE && carbon->namespacing.gauge) {
-		memcpy(nkeyptr, carbon->namespacing.gauge, carbon->namespacing.gauge_len);
-		nkeyptr += carbon->namespacing.gauge_len;
-		*nkeyptr++ = '.';
+		type_namespace = carbon->namespacing.gauge;
+		type_namespace_len = carbon->namespacing.gauge_len;
+		// the counter namespace plus the "." character
+		namespaced_key_len += carbon->namespacing.gauge_len + 1;
 	}
 
-	memcpy(nkeyptr, key, key_len);
-	nkey_len = strlen(nkeyptr);
+	namespaced_key_len += key_len;
 
 	*ptr++ = '(';
 
 	*ptr++ = 'U';
-	*ptr++ = nkey_len;
-	memcpy(ptr, nkeyptr, nkey_len);
-	ptr += nkey_len;
+	*ptr++ = namespaced_key_len;
+	if (carbon->namespacing.global) {
+		memcpy(ptr, carbon->namespacing.global, carbon->namespacing.global_len);
+		ptr += carbon->namespacing.global_len;
+		*ptr++ = '.';
+	}
+	if (type_namespace) {
+		memcpy(ptr, type_namespace, type_namespace_len);
+		ptr += type_namespace_len;
+		*ptr++ = '.';
+	}
+	memcpy(ptr, key, key_len);
+	ptr += key_len;
 
 	*ptr++ = 'q';
 	*ptr++ = buf->pt++;
